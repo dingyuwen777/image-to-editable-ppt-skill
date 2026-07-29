@@ -102,6 +102,8 @@ pages/page_001/
   current-imagegen-jobs.json
   preview.png
   split_assets_contact.png
+  visual_diff.png
+  visual_metrics.json
   validation.json
   page_result.json
   text_hints.json
@@ -109,7 +111,7 @@ pages/page_001/
   assets/...
 ```
 
-The worker must compare the source, current preview, and local validation evidence. It then returns a `revision-result` bundle with complete replacement `manifest.json`, `imagegen-jobs.json`, and required assets for each listed page.
+The worker must compare the source, current preview, contact sheet, visual diff, metrics, and local validation evidence. `visual_metrics.json` is diagnostic evidence only: it cannot waive editability, provenance, semantic completeness, or manifest-contract failures. The worker returns a `revision-result` bundle with complete replacement `manifest.json`, `imagegen-jobs.json`, and required assets for each listed page.
 
 ## 6. Revision history
 
@@ -119,7 +121,7 @@ The worker must compare the source, current preview, and local validation eviden
 RUN/revisions/round-01/before/page_001/
 ```
 
-Changed pages are reset to `pending`; successful pages are not reset. `editppt web build RUN` performs another deterministic build-render-validate-record-finalize cycle.
+Changed pages are reset to `pending`; successful pages are not reset. `editppt web build RUN` performs another deterministic build-render-compare-validate-record-finalize cycle.
 
 ## 7. Integrity and failure policy
 
