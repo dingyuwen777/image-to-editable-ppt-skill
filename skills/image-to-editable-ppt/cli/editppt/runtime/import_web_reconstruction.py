@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 
 from configure_image_backend import web_artifact_contract
 from deck_run_state import load_deck, read_json, resolve_inside, run_dir_from_target, save_deck, write_json
+from validate_pptx import normalize_for_validation, page_contract_violations, quality_contract_violations
 from web_bundle import (
     BundleValidationError,
     load_bundle_envelope,
@@ -65,6 +65,23 @@ def _validate_asset_path(value: str) -> str:
     return normalized
 
 
+def _validate_manifest_contract(manifest: dict, page_id: str) -> None:
+    normalized, authoring_violations = normalize_for_validation(manifest)
+    violations = (
+        authoring_violations
+        + page_contract_violations(normalized)
+        + quality_contract_violations(manifest)
+    )
+    if violations:
+        summary = "; ".join(
+            f"{item.get('field', 'manifest')}: {item.get('reason', item)}"
+            for item in violations[:12]
+        )
+        if len(violations) > 12:
+            summary += f"; ... {len(violations) - 12} more"
+        raise BundleValidationError(f"manifest contract failed for {page_id}: {summary}")
+
+
 def _validate_page_payload(extracted_root: Path, page_id: str) -> tuple[dict, Path, dict]:
     incoming = extracted_root / "pages" / page_id
     manifest_path = incoming / "manifest.json"
@@ -83,6 +100,7 @@ def _validate_page_payload(extracted_root: Path, page_id: str) -> tuple[dict, Pa
     if not isinstance(image_jobs, dict):
         raise BundleValidationError(f"imagegen-jobs.json for {page_id} must be an object")
 
+    _validate_manifest_contract(manifest, page_id)
     for raw_path in sorted(_asset_paths(manifest)):
         normalized = _validate_asset_path(raw_path)
         candidate = incoming.joinpath(*PurePosixPath(normalized).parts)
