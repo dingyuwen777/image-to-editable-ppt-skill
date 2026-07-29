@@ -45,6 +45,7 @@ def _needs_revision(run_dir: Path, page: dict) -> bool:
 def _correction_request(page_id: str, page_dir: Path, page: dict, round_number: int) -> dict:
     validation = read_json(page_dir / "validation.json", default={})
     page_result = read_json(page_dir / "page_result.json", default={})
+    visual_metrics = read_json(page_dir / "visual_metrics.json", default={})
     errors = []
     errors.extend(page_result.get("errors", []) if isinstance(page_result.get("errors"), list) else [])
     errors.extend(validation.get("warnings", []) if isinstance(validation.get("warnings"), list) else [])
@@ -66,6 +67,7 @@ def _correction_request(page_id: str, page_dir: Path, page: dict, round_number: 
         "current_status": page.get("status"),
         "goal": "Correct semantic/visual reconstruction issues while preserving source-pixel authoring, editability, asset provenance, and all quality contracts.",
         "errors": errors,
+        "visual_metrics": visual_metrics,
         "required_output": {
             "manifest": "manifest.json",
             "imagegen_jobs": "imagegen-jobs.json",
@@ -103,6 +105,8 @@ def export_revision(
             ("manifest.json", "current-manifest.json"),
             ("preview.png", "preview.png"),
             ("split_assets_contact.png", "split_assets_contact.png"),
+            ("visual_diff.png", "visual_diff.png"),
+            ("visual_metrics.json", "visual_metrics.json"),
             ("validation.json", "validation.json"),
             ("page_result.json", "page_result.json"),
             ("text_hints.json", "text_hints.json"),
