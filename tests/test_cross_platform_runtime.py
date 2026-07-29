@@ -10,7 +10,7 @@ RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
 import _input_normalization as input_normalization  # noqa: E402
-from build_pptx_from_manifest import find_imagemagick, preview_font_candidates  # noqa: E402
+from platform_support import find_imagemagick, preview_font_candidates  # noqa: E402
 
 
 class CrossPlatformRuntimeTest(unittest.TestCase):
@@ -29,8 +29,10 @@ class CrossPlatformRuntimeTest(unittest.TestCase):
                 source.write_bytes(b"png")
                 return [source]
 
+            converted = root / "converted.pptx"
+            converted.write_bytes(b"pptx")
             with mock.patch.object(
-                input_normalization, "convert_ppt_to_pptx", return_value=root / "converted.pptx"
+                input_normalization, "convert_ppt_to_pptx", return_value=converted
             ), mock.patch.object(
                 input_normalization, "collect_notes_from_pptx", return_value=[]
             ), mock.patch.object(
