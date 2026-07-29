@@ -163,14 +163,31 @@ def _process_page(run_dir: Path, jobs: dict, page: dict) -> tuple[bool, list[str
     return True, []
 
 
+def _ordered_page_ids(jobs: dict) -> list[str]:
+    return [
+        page["page_id"]
+        for page in sorted(jobs.get("pages", []), key=lambda item: int(item.get("page_index", 0)))
+    ]
+
+
+def _current_page(jobs: dict, page_id: str) -> dict:
+    for page in jobs.get("pages", []):
+        if page.get("page_id") == page_id:
+            return page
+    raise RuntimeError(f"page disappeared from page_jobs.json: {page_id}")
+
+
 def build_web_run(run: str | Path, finalize: bool = True) -> dict:
     run_dir = run_dir_from_target(run)
     deck = load_deck(run_dir)
-    jobs = load_jobs(run_dir)
+    initial_jobs = load_jobs(run_dir)
+    page_ids = _ordered_page_ids(initial_jobs)
     recorded_pages: list[str] = []
     failed_pages: list[dict] = []
 
-    for page in sorted(jobs.get("pages", []), key=lambda item: int(item.get("page_index", 0))):
+    for page_id in page_ids:
+        jobs = load_jobs(run_dir)
+        page = _current_page(jobs, page_id)
         try:
             passed, errors = _process_page(run_dir, jobs, page)
         except Exception as exc:
@@ -178,17 +195,18 @@ def build_web_run(run: str | Path, finalize: bool = True) -> dict:
             page_dir = page_dir_for(run_dir, page)
             _ensure_failed_validation(page_dir, errors)
             write_json(page_dir / "page_result.json", _page_result_payload("failed", errors))
-        jobs = load_jobs(run_dir)
-        page = next(item for item in jobs.get("pages", []) if item.get("page_id") == page["page_id"])
+
+        current_jobs = load_jobs(run_dir)
+        current_page = _current_page(current_jobs, page_id)
         if passed:
-            recorded_pages.append(page["page_id"])
+            recorded_pages.append(page_id)
         else:
             failed_pages.append(
                 {
-                    "page_id": page["page_id"],
-                    "status": page.get("status"),
+                    "page_id": page_id,
+                    "status": current_page.get("status"),
                     "errors": errors,
-                    "validation": str(page_dir_for(run_dir, page) / "validation.json"),
+                    "validation": str(page_dir_for(run_dir, current_page) / "validation.json"),
                 }
             )
 
