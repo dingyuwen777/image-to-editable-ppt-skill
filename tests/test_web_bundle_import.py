@@ -68,18 +68,9 @@ class WebBundleImportTest(unittest.TestCase):
         (run / "run_state.json").write_text(json.dumps({"status": "inputs_prepared", "history": []}), encoding="utf-8")
         return run
 
-    def make_bundle(
-        self,
-        root: Path,
-        run: Path,
-        *,
-        job_id="job-001",
-        source_hash=None,
-        manifest=None,
-        include_asset=True,
-    ) -> Path:
-        source_hash = source_hash or sha256_file(run / "pages/page_001/source.png")
-        manifest = manifest or {
+    def valid_manifest(self):
+        return {
+            "source": {"width_px": 1280, "height_px": 720},
             "slide": {"width": 13.333, "height": 7.5, "background": "#FFFFFF"},
             "visual_inventory": [],
             "background_strategy": {"mode": "native-or-script", "comparison_note": "checked"},
@@ -110,6 +101,19 @@ class WebBundleImportTest(unittest.TestCase):
                 }
             ],
         }
+
+    def make_bundle(
+        self,
+        root: Path,
+        run: Path,
+        *,
+        job_id="job-001",
+        source_hash=None,
+        manifest=None,
+        include_asset=True,
+    ) -> Path:
+        source_hash = source_hash or sha256_file(run / "pages/page_001/source.png")
+        manifest = manifest or self.valid_manifest()
         envelope = {
             "protocol": "editppt-web-bundle",
             "version": 1,
@@ -183,16 +187,26 @@ class WebBundleImportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = self.make_run(root)
-            manifest = {
-                "images": [{"path": "../source.png"}],
-                "visual_inventory": [],
-                "background_strategy": {},
-                "quality_checks": {},
-            }
+            manifest = self.valid_manifest()
+            manifest["images"][0]["path"] = "../source.png"
+            manifest["asset_provenance"] = []
             bundle = self.make_bundle(root, run, manifest=manifest)
 
             with self.assertRaisesRegex(BundleValidationError, "asset path"):
                 import_reconstruction(run, bundle)
+
+    def test_rejects_schema_invalid_manifest_before_modifying_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self.make_run(root)
+            manifest = self.valid_manifest()
+            del manifest["quality_checks"]
+            bundle = self.make_bundle(root, run, manifest=manifest)
+
+            with self.assertRaisesRegex(BundleValidationError, "manifest contract"):
+                import_reconstruction(run, bundle)
+
+            self.assertEqual('{"old": true}', (run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
