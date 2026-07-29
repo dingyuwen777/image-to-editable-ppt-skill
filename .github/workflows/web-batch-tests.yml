@@ -1,0 +1,47 @@
+name: Web Batch Tests
+
+on:
+  push:
+    branches:
+      - feature/web-batch-reconstruction
+  pull_request:
+    paths:
+      - "skills/image-to-editable-ppt/**"
+      - "skills/image-to-editable-ppt-web/**"
+      - "tests/**"
+      - ".github/workflows/web-batch-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: skills/image-to-editable-ppt/cli/pyproject.toml
+      - name: Install CLI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e skills/image-to-editable-ppt/cli
+      - name: Verify installed command surface
+        run: |
+          editppt --help
+          editppt web --help
+          editppt web export --help
+          editppt web inspect --help
+          editppt web import --help
+          editppt web build --help
+          editppt revision --help
+          editppt revision export --help
+          editppt revision apply --help
+      - name: Run tests
+        run: python -m unittest discover -s tests -v

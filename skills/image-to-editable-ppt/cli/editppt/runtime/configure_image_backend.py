@@ -5,7 +5,35 @@ import json
 from deck_run_state import load_deck, load_jobs, read_json, run_dir_from_target, save_deck, write_json
 
 
+BACKEND_CHOICES = ["builtin-imagegen", "editppt-image-cli", "openai-compatible-api", "web-artifact"]
+
+
+def web_artifact_contract():
+    """Return the immutable no-API contract used by ChatGPT Web bundle imports."""
+
+    return {
+        "backend_id": "web-artifact",
+        "tool_name": "chatgpt-web",
+        "tool_call": "verified reconstruction bundle import",
+        "fallback_command": None,
+        "runtime_home": None,
+        "model": None,
+        "requires_openai_api_key": False,
+        "mode_policy": "import-generated-assets",
+        "chroma_key_helper": "editppt image process-sheet",
+        "input_context_policy": "manifests and generated assets arrive only through a verified reconstruction or revision bundle",
+        "save_path_policy": "accept only verified page-local files under assets/ with source-page integrity and provenance records",
+        "handoff_rule": "ChatGPT Web generates or edits assets; local editppt imports, builds, renders, validates, records, and finalizes without model API fallback",
+        "asset_delivery": "reconstruction-bundle",
+        "provenance_required": True,
+        "fallback_policy": {"allowed": False, "on": []},
+    }
+
+
 def backend_contract(args):
+    if args.backend_id == "web-artifact":
+        return web_artifact_contract()
+
     is_builtin = args.backend_id == "builtin-imagegen"
     requires_api_key = args.backend_id == "openai-compatible-api"
     contract = {
@@ -60,7 +88,7 @@ def main():
     parser.add_argument(
         "--backend-id",
         default="editppt-image-cli",
-        choices=["builtin-imagegen", "editppt-image-cli", "openai-compatible-api"],
+        choices=BACKEND_CHOICES,
     )
     parser.add_argument("--tool-name")
     parser.add_argument("--tool-call")
@@ -70,7 +98,7 @@ def main():
     parser.add_argument("--input-context-policy")
     args = parser.parse_args()
 
-    if args.backend_id == "builtin-imagegen":
+    if args.backend_id in {"builtin-imagegen", "web-artifact"}:
         fixed_field_overrides = [
             flag
             for flag, value in (
@@ -83,8 +111,10 @@ def main():
         ]
         if fixed_field_overrides:
             parser.error(
-                f"{', '.join(fixed_field_overrides)} cannot override the fixed builtin-imagegen contract"
+                f"{', '.join(fixed_field_overrides)} cannot override the fixed {args.backend_id} contract"
             )
+
+    if args.backend_id == "builtin-imagegen":
         args.tool_name = "image_gen.imagegen"
         args.tool_call = "image_gen.imagegen"
         args.fallback_command = "editppt image generate/edit"
@@ -92,7 +122,7 @@ def main():
             "generation needs prompt; for editing inspect every local input with view_image first, then pass "
             "prompt plus absolute local paths in referenced_image_paths"
         )
-    else:
+    elif args.backend_id != "web-artifact":
         if args.tool_name is None:
             args.tool_name = "editppt image"
         if args.tool_call is None:

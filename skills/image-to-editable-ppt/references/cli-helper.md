@@ -267,3 +267,53 @@ editppt formula render-latex pages/page_001 \
 ```
 
 The agent transcribes the formula from the source into LaTeX. The CLI only renders it into an image asset and manifest fragment.
+
+## ChatGPT Web Batch Commands
+
+These commands implement the low-API local → ChatGPT Web → local workflow. Bundle fields and path rules are owned by `web-bundle-protocol.md`.
+
+Export a prepared run:
+
+```bash
+editppt web export <run> --out handoff.zip
+```
+
+Inspect any handoff/reconstruction/revision bundle without modifying a run:
+
+```bash
+editppt web inspect bundle.zip
+```
+
+Import the initial result returned by the Web Skill:
+
+```bash
+editppt web import <run> reconstruction.zip
+```
+
+Build, render, validate, record, and finalize all imported pages:
+
+```bash
+editppt web build <run>
+```
+
+Use `--no-finalize` to stop after successful page recording:
+
+```bash
+editppt web build <run> --no-finalize
+```
+
+Export only failed/unrecorded pages for another semantic correction round:
+
+```bash
+editppt revision export <run> --out revision-round-01.zip
+```
+
+Apply the `revision-result` ZIP returned by the Web Skill, archive the prior page state, and reset only changed pages:
+
+```bash
+editppt revision apply <run> revision-result-round-01.zip
+editppt web build <run>
+```
+
+Web import and revision apply treat ZIP files as untrusted input. Never bypass their job/source-hash, path, asset, provenance, or size checks by copying files directly into a run directory.
+
