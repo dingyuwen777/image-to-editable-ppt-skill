@@ -3,13 +3,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from import_web_reconstruction import import_reconstruction  # noqa: E402
+import import_web_reconstruction as reconstruction_import  # noqa: E402
 from web_bundle import BundleValidationError, json_bytes, sha256_file, write_zip_atomic  # noqa: E402
 
 
@@ -23,6 +24,9 @@ class WebBundleImportTest(unittest.TestCase):
         (page / "page_request.json").write_text(
             json.dumps({"run_id": "job-001", "page_id": "page_001"}), encoding="utf-8"
         )
+        (page / "page.pptx").write_bytes(b"stale-page")
+        (page / "preview.png").write_bytes(b"stale-preview")
+        (page / "validation.json").write_text(json.dumps({"passed": False}), encoding="utf-8")
         deck = {
             "schema_version": 1,
             "run_id": "job-001",
@@ -34,6 +38,7 @@ class WebBundleImportTest(unittest.TestCase):
                     "page_index": 1,
                     "page_dir": "pages/page_001",
                     "source_image": "pages/page_001/source.png",
+                    "page_request": "pages/page_001/page_request.json",
                     "manifest": "pages/page_001/manifest.json",
                     "validation": "pages/page_001/validation.json",
                 }
@@ -136,21 +141,25 @@ class WebBundleImportTest(unittest.TestCase):
         write_zip_atomic(bundle, members)
         return bundle
 
-    def test_imports_verified_manifest_assets_and_provenance(self):
+    def test_imports_verified_manifest_assets_and_removes_stale_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = self.make_run(root)
             bundle = self.make_bundle(root, run)
 
-            result = import_reconstruction(run, bundle)
+            result = reconstruction_import.import_reconstruction(run, bundle)
 
+            page = run / "pages/page_001"
             self.assertEqual(["page_001"], result["imported_pages"])
-            manifest = json.loads((run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads((page / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual("assets/icon.png", manifest["images"][0]["path"])
-            self.assertEqual(b"icon", (run / "pages/page_001/assets/icon.png").read_bytes())
-            metadata = json.loads((run / "pages/page_001/web_import.json").read_text(encoding="utf-8"))
+            self.assertEqual(b"icon", (page / "assets/icon.png").read_bytes())
+            metadata = json.loads((page / "web_import.json").read_text(encoding="utf-8"))
             self.assertEqual("reconstruction", metadata["bundle_type"])
             self.assertEqual(sha256_file(bundle), metadata["bundle_sha256"])
+            self.assertFalse((page / "page.pptx").exists())
+            self.assertFalse((page / "preview.png").exists())
+            self.assertFalse((page / "validation.json").exists())
 
     def test_rejects_mismatched_job_without_modifying_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,7 +168,7 @@ class WebBundleImportTest(unittest.TestCase):
             bundle = self.make_bundle(root, run, job_id="other-job")
 
             with self.assertRaisesRegex(BundleValidationError, "job id"):
-                import_reconstruction(run, bundle)
+                reconstruction_import.import_reconstruction(run, bundle)
 
             self.assertEqual('{"old": true}', (run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
 
@@ -170,7 +179,7 @@ class WebBundleImportTest(unittest.TestCase):
             bundle = self.make_bundle(root, run, source_hash="b" * 64)
 
             with self.assertRaisesRegex(BundleValidationError, "source hash"):
-                import_reconstruction(run, bundle)
+                reconstruction_import.import_reconstruction(run, bundle)
 
             self.assertEqual('{"old": true}', (run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
 
@@ -181,7 +190,7 @@ class WebBundleImportTest(unittest.TestCase):
             bundle = self.make_bundle(root, run, include_asset=False)
 
             with self.assertRaisesRegex(BundleValidationError, "missing asset"):
-                import_reconstruction(run, bundle)
+                reconstruction_import.import_reconstruction(run, bundle)
 
     def test_rejects_asset_path_outside_assets_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,7 +202,7 @@ class WebBundleImportTest(unittest.TestCase):
             bundle = self.make_bundle(root, run, manifest=manifest)
 
             with self.assertRaisesRegex(BundleValidationError, "asset path"):
-                import_reconstruction(run, bundle)
+                reconstruction_import.import_reconstruction(run, bundle)
 
     def test_rejects_schema_invalid_manifest_before_modifying_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,9 +213,44 @@ class WebBundleImportTest(unittest.TestCase):
             bundle = self.make_bundle(root, run, manifest=manifest)
 
             with self.assertRaisesRegex(BundleValidationError, "manifest contract"):
-                import_reconstruction(run, bundle)
+                reconstruction_import.import_reconstruction(run, bundle)
 
             self.assertEqual('{"old": true}', (run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
+
+    def test_rejects_initial_import_after_page_processing_started(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self.make_run(root)
+            jobs_path = run / "page_jobs.json"
+            jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+            jobs["pages"][0]["status"] = "dispatched"
+            jobs["pages"][0]["dispatch"] = {"agent_id": "web-batch"}
+            jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+            bundle = self.make_bundle(root, run)
+
+            with self.assertRaisesRegex(BundleValidationError, "revision"):
+                reconstruction_import.import_reconstruction(run, bundle)
+
+    def test_mid_replace_failure_restores_current_page_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self.make_run(root)
+            bundle = self.make_bundle(root, run)
+            original_replace = reconstruction_import._replace_targets
+
+            def corrupt_then_fail(page_dir, stage):
+                (page_dir / "manifest.json").write_text('{"corrupt": true}', encoding="utf-8")
+                (page_dir / "preview.png").unlink(missing_ok=True)
+                raise OSError("injected copy failure")
+
+            with mock.patch.object(reconstruction_import, "_replace_targets", side_effect=corrupt_then_fail):
+                with self.assertRaisesRegex(OSError, "injected copy failure"):
+                    reconstruction_import.import_reconstruction(run, bundle)
+
+            page = run / "pages/page_001"
+            self.assertEqual('{"old": true}', (page / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(b"stale-preview", (page / "preview.png").read_bytes())
+            self.assertEqual(b"stale-page", (page / "page.pptx").read_bytes())
 
 
 if __name__ == "__main__":
