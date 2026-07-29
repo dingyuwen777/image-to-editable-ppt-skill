@@ -112,10 +112,18 @@ def _process_page(run_dir: Path, jobs: dict, page: dict) -> tuple[bool, list[str
 
     build = _run_script(
         "build_pptx_from_manifest.py",
-        [page_dir / "manifest.json", "--out", page_dir / "page.pptx", "--preview", page_dir / "preview.png"],
+        [page_dir / "manifest.json", "--out", page_dir / "page.pptx"],
     )
     if build.returncode != 0:
         errors.append((build.stdout + build.stderr).strip() or "page build failed")
+
+    if not errors:
+        preview = _run_script(
+            "cross_platform_preview.py",
+            [page_dir / "manifest.json", "--out", page_dir / "preview.png"],
+        )
+        if preview.returncode != 0:
+            errors.append((preview.stdout + preview.stderr).strip() or "page preview failed")
 
     if not errors:
         contact = _run_script("make_page_contact_sheet.py", [page_dir])
