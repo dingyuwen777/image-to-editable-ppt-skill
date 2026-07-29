@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, render, validate, record, and finalize imported web reconstruction pages."""
+"""Build, render, compare, validate, record, and finalize imported web reconstruction pages."""
 
 from __future__ import annotations
 
@@ -76,6 +76,8 @@ def _page_result_payload(status: str, errors: list[str] | None = None) -> dict:
         "page_pptx": "page.pptx",
         "preview": "preview.png",
         "contact_sheet": "split_assets_contact.png",
+        "visual_diff": "visual_diff.png",
+        "visual_metrics": "visual_metrics.json",
         "validation": "validation.json",
         "page_result": "page_result.json",
         "errors": errors or [],
@@ -129,6 +131,11 @@ def _process_page(run_dir: Path, jobs: dict, page: dict) -> tuple[bool, list[str
         contact = _run_script("make_page_contact_sheet.py", [page_dir])
         if contact.returncode != 0:
             errors.append((contact.stdout + contact.stderr).strip() or "contact sheet failed")
+
+    if not errors:
+        visual_diff = _run_script("make_visual_diff.py", [page_dir])
+        if visual_diff.returncode != 0:
+            errors.append((visual_diff.stdout + visual_diff.stderr).strip() or "visual diff failed")
 
     if not errors:
         validation = _run_script(
@@ -220,7 +227,7 @@ def build_web_run(run: str | Path, finalize: bool = True) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build, validate, record, and finalize imported web pages.")
+    parser = argparse.ArgumentParser(description="Build, compare, validate, record, and finalize imported web pages.")
     parser.add_argument("run")
     parser.add_argument("--no-finalize", action="store_true")
     args = parser.parse_args()
