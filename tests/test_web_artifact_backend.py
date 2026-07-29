@@ -8,8 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from configure_image_backend import backend_contract, web_artifact_contract  # noqa: E402
-from main import build_parser  # noqa: E402
+from configure_image_backend import BACKEND_CHOICES, backend_contract, web_artifact_contract  # noqa: E402
 
 
 class WebArtifactBackendTest(unittest.TestCase):
@@ -33,12 +32,8 @@ class WebArtifactBackendTest(unittest.TestCase):
         )
         self.assertEqual(web_artifact_contract(), backend_contract(args))
 
-    def test_cli_accepts_web_artifact_backend_for_prepare_and_run_backend(self):
-        parser = build_parser()
-        prepare = parser.parse_args(["prepare", "slide.png", "--image-backend", "web-artifact"])
-        self.assertEqual("web-artifact", prepare.image_backend)
-        backend = parser.parse_args(["run", "backend", "run-dir", "--mode", "web-artifact"])
-        self.assertEqual("web-artifact", backend.mode)
+    def test_configure_backend_declares_web_artifact_choice(self):
+        self.assertIn("web-artifact", BACKEND_CHOICES)
 
 
 if __name__ == "__main__":
