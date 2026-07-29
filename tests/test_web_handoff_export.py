@@ -11,7 +11,7 @@ RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
 from export_web_handoff import export_handoff  # noqa: E402
-from web_bundle import load_bundle_envelope, safe_extract, sha256_file  # noqa: E402
+from web_bundle import load_bundle_envelope, safe_extract, sha256_bytes, sha256_file  # noqa: E402
 
 
 class WebHandoffExportTest(unittest.TestCase):
@@ -111,6 +111,9 @@ class WebHandoffExportTest(unittest.TestCase):
                 all_bytes = b"\n".join(archive.read(name) for name in names)
                 self.assertNotIn(str(run.resolve()).encode(), all_bytes)
                 self.assertNotIn(b"OPENAI_API_KEY", all_bytes)
+                envelope = json.loads(archive.read("bundle.json"))
+                for member_name, expected_hash in envelope["members"].items():
+                    self.assertEqual(expected_hash, sha256_bytes(archive.read(member_name)), member_name)
 
             extract = root / "extract"
             safe_extract(out, extract)
