@@ -4,6 +4,20 @@ Release notes are generated from this file. Keep changelog entries in English.
 
 ## Unreleased
 
+
+### Features
+
+- Add low-API ChatGPT Web batch handoff, verified reconstruction import, deterministic local build/finalize, and failed-page revision rounds through `editppt web` and `editppt revision` commands.
+- Add the `web-artifact` backend so web-generated assets can be imported with provenance and integrity checks without OpenAI API credentials or Codex OAuth.
+
+### Fixes
+
+- Use the requested DPI when normalizing legacy `.ppt` files, and add cross-platform ImageMagick and CJK font discovery for Web Batch previews.
+
+### Documentation
+
+- Add the ChatGPT Web Skill, bundle protocol, Chinese usage guide, troubleshooting guide, global objective, design specification, and implementation plan for the batch workflow.
+
 ### Documentation
 
 - Add complete Korean README and English and Korean versions of the Docsify usage documentation, with synchronized language navigation, search, and pagination. (#26)
