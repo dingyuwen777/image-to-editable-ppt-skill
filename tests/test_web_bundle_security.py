@@ -5,12 +5,14 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
+import web_bundle  # noqa: E402
 from web_bundle import (  # noqa: E402
     BundleLimits,
     BundleValidationError,
@@ -108,6 +110,23 @@ class WebBundleSecurityTest(unittest.TestCase):
                 set(extracted),
             )
             self.assertEqual(b"png", (destination / "pages/page_001/source.png").read_bytes())
+
+    def test_safe_extract_rejects_archive_changed_after_inspection(self):
+        path = self.make_zip([("bundle.json", json.dumps(self.valid_envelope()).encode("utf-8"))])
+        original_inspect = web_bundle.inspect_zip
+
+        def inspect_then_replace(candidate, limits=None):
+            members = original_inspect(candidate, limits)
+            with zipfile.ZipFile(candidate, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("bundle.json", b"{}")
+                archive.writestr("unexpected.txt", b"changed")
+            return members
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            web_bundle, "inspect_zip", side_effect=inspect_then_replace
+        ):
+            with self.assertRaisesRegex(BundleValidationError, "changed during validation"):
+                web_bundle.safe_extract(path, Path(tmp) / "extract")
 
     def test_load_bundle_envelope_validates_protocol_and_type(self):
         with tempfile.TemporaryDirectory() as tmp:
