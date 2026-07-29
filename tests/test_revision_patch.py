@@ -3,13 +3,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = ROOT / "skills/image-to-editable-ppt/cli/editppt/runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from apply_web_revision import apply_revision  # noqa: E402
+import apply_web_revision as revision_apply  # noqa: E402
 from web_bundle import BundleValidationError, json_bytes, sha256_file, write_zip_atomic  # noqa: E402
 
 
@@ -130,7 +131,7 @@ class RevisionApplyTest(unittest.TestCase):
             run = self.make_run(root)
             bundle = self.make_result_bundle(root, run)
 
-            result = apply_revision(run, bundle)
+            result = revision_apply.apply_revision(run, bundle)
 
             page = run / "pages/page_001"
             self.assertEqual(["page_001"], result["applied_pages"])
@@ -160,11 +161,35 @@ class RevisionApplyTest(unittest.TestCase):
             bundle = self.make_result_bundle(root, run, source_hash="c" * 64)
 
             with self.assertRaisesRegex(BundleValidationError, "source hash"):
-                apply_revision(run, bundle)
+                revision_apply.apply_revision(run, bundle)
 
             manifest = json.loads((run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
             self.assertEqual("old", manifest["version"])
             self.assertEqual(b"old-final", (run / "final/deck_edited.pptx").read_bytes())
+
+    def test_mid_replace_failure_restores_page_state_and_final_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self.make_run(root)
+            bundle = self.make_result_bundle(root, run)
+
+            def corrupt_then_fail(page_dir, stage):
+                (page_dir / "manifest.json").write_text(json.dumps({"version": "corrupt"}), encoding="utf-8")
+                (page_dir / "preview.png").unlink(missing_ok=True)
+                raise OSError("injected revision copy failure")
+
+            with mock.patch.object(revision_apply, "_replace_targets", side_effect=corrupt_then_fail):
+                with self.assertRaisesRegex(OSError, "injected revision copy failure"):
+                    revision_apply.apply_revision(run, bundle)
+
+            page = run / "pages/page_001"
+            self.assertEqual("old", json.loads((page / "manifest.json").read_text(encoding="utf-8"))["version"])
+            self.assertEqual(b"old-preview", (page / "preview.png").read_bytes())
+            self.assertEqual(b"old-page-pptx", (page / "page.pptx").read_bytes())
+            self.assertEqual(b"old-final", (run / "final/deck_edited.pptx").read_bytes())
+            jobs = json.loads((run / "page_jobs.json").read_text(encoding="utf-8"))
+            self.assertEqual("dispatched", jobs["pages"][0]["status"])
+            self.assertFalse((run / "revisions/round-01").exists())
 
 
 if __name__ == "__main__":
