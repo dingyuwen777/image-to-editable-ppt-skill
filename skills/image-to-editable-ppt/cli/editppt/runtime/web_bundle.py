@@ -14,7 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Mapping
+from typing import Mapping
 
 
 PROTOCOL = "editppt-web-bundle"
@@ -136,11 +136,7 @@ def inspect_zip(path: str | Path, limits: BundleLimits | None = None) -> list[Zi
                 raise BundleValidationError(
                     f"bundle total size exceeds limit: {total_size} > {limits.max_total_size}"
                 )
-            if (
-                not info.is_dir()
-                and info.file_size > 0
-                and info.compress_size == 0
-            ):
+            if not info.is_dir() and info.file_size > 0 and info.compress_size == 0:
                 raise BundleValidationError(f"invalid zero compressed size: {normalized}")
             if (
                 not info.is_dir()
@@ -171,49 +167,75 @@ def _ensure_no_symlink_ancestors(destination: Path, target: Path) -> None:
         raise BundleValidationError(f"extraction destination is a symlink: {destination}")
 
 
+def _remove_extracted_files(paths: list[Path], root: Path) -> None:
+    for path in reversed(paths):
+        if path.is_file() or path.is_symlink():
+            path.unlink(missing_ok=True)
+    for directory in sorted(
+        (item for item in root.rglob("*") if item.is_dir() and not item.is_symlink()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+
 def safe_extract(
     zip_path: str | Path,
     destination: str | Path,
     limits: BundleLimits | None = None,
 ) -> list[Path]:
     limits = limits or BundleLimits()
-    inspect_zip(zip_path, limits)
+    archive_path = Path(zip_path).resolve()
+    validated_hash = sha256_file(archive_path)
+    inspect_zip(archive_path, limits)
+    if sha256_file(archive_path) != validated_hash:
+        raise BundleValidationError("ZIP bundle changed during validation")
+
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     root = destination.resolve()
     extracted: list[Path] = []
 
-    with zipfile.ZipFile(zip_path, "r") as archive:
-        for info in archive.infolist():
-            normalized = normalize_member_name(info.filename)
-            target = (root / Path(*PurePosixPath(normalized).parts)).resolve()
-            try:
-                target.relative_to(root)
-            except ValueError as exc:
-                raise BundleValidationError(f"bundle member escapes extraction root: {normalized}") from exc
-            _ensure_no_symlink_ancestors(root, target.parent)
-            if info.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists() and target.is_symlink():
-                raise BundleValidationError(f"refusing to overwrite symlink: {target}")
-            written = 0
-            with archive.open(info, "r") as source, target.open("wb") as output:
-                while True:
-                    chunk = source.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    written += len(chunk)
-                    if written > limits.max_member_size:
-                        raise BundleValidationError(f"extracted member exceeded limit: {normalized}")
-                    output.write(chunk)
-            if written != info.file_size:
-                raise BundleValidationError(
-                    f"extracted member size mismatch: {normalized} ({written} != {info.file_size})"
-                )
-            extracted.append(target)
-    return extracted
+    try:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            for info in archive.infolist():
+                normalized = normalize_member_name(info.filename)
+                target = (root / Path(*PurePosixPath(normalized).parts)).resolve()
+                try:
+                    target.relative_to(root)
+                except ValueError as exc:
+                    raise BundleValidationError(f"bundle member escapes extraction root: {normalized}") from exc
+                _ensure_no_symlink_ancestors(root, target.parent)
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() and target.is_symlink():
+                    raise BundleValidationError(f"refusing to overwrite symlink: {target}")
+                written = 0
+                with archive.open(info, "r") as source, target.open("wb") as output:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > limits.max_member_size:
+                            raise BundleValidationError(f"extracted member exceeded limit: {normalized}")
+                        output.write(chunk)
+                if written != info.file_size:
+                    raise BundleValidationError(
+                        f"extracted member size mismatch: {normalized} ({written} != {info.file_size})"
+                    )
+                extracted.append(target)
+        if sha256_file(archive_path) != validated_hash:
+            raise BundleValidationError("ZIP bundle changed during extraction")
+        return extracted
+    except Exception:
+        _remove_extracted_files(extracted, root)
+        raise
 
 
 def _validate_page_entry(page: object, index: int) -> tuple[str, str]:
