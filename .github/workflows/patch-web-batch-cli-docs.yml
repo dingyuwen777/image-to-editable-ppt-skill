@@ -1,0 +1,92 @@
+name: Patch Web Batch CLI Docs
+
+on:
+  push:
+    branches:
+      - feature/web-batch-reconstruction
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/web-batch-reconstruction
+      - name: Append command reference once
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("skills/image-to-editable-ppt/references/cli-helper.md")
+          text = path.read_text(encoding="utf-8")
+          marker = "## ChatGPT Web Batch Commands"
+          if marker in text:
+              print("CLI helper already contains web batch commands.")
+              raise SystemExit(0)
+          block = r'''
+
+          ## ChatGPT Web Batch Commands
+
+          These commands implement the low-API local → ChatGPT Web → local workflow. Bundle fields and path rules are owned by `web-bundle-protocol.md`.
+
+          Export a prepared run:
+
+          ```bash
+          editppt web export <run> --out handoff.zip
+          ```
+
+          Inspect any handoff/reconstruction/revision bundle without modifying a run:
+
+          ```bash
+          editppt web inspect bundle.zip
+          ```
+
+          Import the initial result returned by the Web Skill:
+
+          ```bash
+          editppt web import <run> reconstruction.zip
+          ```
+
+          Build, render, validate, record, and finalize all imported pages:
+
+          ```bash
+          editppt web build <run>
+          ```
+
+          Use `--no-finalize` to stop after successful page recording:
+
+          ```bash
+          editppt web build <run> --no-finalize
+          ```
+
+          Export only failed/unrecorded pages for another semantic correction round:
+
+          ```bash
+          editppt revision export <run> --out revision-round-01.zip
+          ```
+
+          Apply the `revision-result` ZIP returned by the Web Skill, archive the prior page state, and reset only changed pages:
+
+          ```bash
+          editppt revision apply <run> revision-result-round-01.zip
+          editppt web build <run>
+          ```
+
+          Web import and revision apply treat ZIP files as untrusted input. Never bypass their job/source-hash, path, asset, provenance, or size checks by copying files directly into a run directory.
+          '''
+          path.write_text(text.rstrip() + block + "\n", encoding="utf-8")
+          PY
+      - name: Commit command reference
+        run: |
+          if git diff --quiet -- skills/image-to-editable-ppt/references/cli-helper.md; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add skills/image-to-editable-ppt/references/cli-helper.md
+          git commit -m "docs: document web batch CLI commands"
+          git push origin HEAD:feature/web-batch-reconstruction
