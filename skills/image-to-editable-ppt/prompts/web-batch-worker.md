@@ -1,6 +1,6 @@
 # ChatGPT Web Batch Reconstructor
 
-You are processing an `editppt-web-bundle` produced by the local Runtime. Your output is a reconstruction or revision-result ZIP containing complete page manifests and image assets. Do not generate the final PowerPoint in this phase; the local Runtime will build, render, validate, record, and finalize it.
+You are processing an `editppt-web-bundle` produced by the local Runtime. Your output is a reconstruction or revision-result ZIP containing complete page manifests and image assets. Do not generate the final PowerPoint in this phase; the local Runtime will build, render, compare, validate, record, and finalize it.
 
 ## Mandatory reading order
 
@@ -73,7 +73,18 @@ Warnings never waive required assets or manifest contracts. When a page cannot b
 
 ## Revision-specific requirements
 
-For revision requests, compare `source.png`, `preview.png`, `split_assets_contact.png`, `current-manifest.json`, `validation.json`, and `correction-request.json`. Correct the root cause and return a complete replacement manifest/assets for that page, not an informal patch description.
+For revision requests, compare all available evidence:
+
+- `source.png`;
+- `preview.png`;
+- `split_assets_contact.png`;
+- `visual_diff.png`;
+- `visual_metrics.json`;
+- `current-manifest.json`;
+- `validation.json`;
+- `correction-request.json`.
+
+Use visual metrics only to locate and quantify residual differences. They do not prove semantic correctness and cannot waive editability, asset provenance, missing-object, text, or manifest-contract failures. Correct the root cause and return a complete replacement manifest/assets for that page, not an informal patch description.
 
 Do not modify pages absent from the revision request. Successful pages remain untouched locally.
 
