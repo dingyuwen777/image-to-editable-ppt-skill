@@ -23,7 +23,6 @@ from import_web_reconstruction import (
     _copy_page_to_stage,
     _page_map,
     _replace_targets,
-    _restore_targets,
     _validate_page_payload,
 )
 from web_bundle import (
@@ -47,6 +46,20 @@ ARCHIVE_NAMES = (
     "page_result.json",
     "assets",
 )
+DERIVED_NAMES = (
+    "page.pptx",
+    "preview.png",
+    "split_assets_contact.png",
+    "validation.json",
+    "page_result.json",
+)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
 
 
 def _archive_page(page_dir: Path, archive: Path) -> None:
@@ -57,6 +70,21 @@ def _archive_page(page_dir: Path, archive: Path) -> None:
             shutil.copytree(source, archive / name)
         elif source.is_file() and not source.is_symlink():
             shutil.copyfile(source, archive / name)
+
+
+def _restore_page_snapshot(page_dir: Path, archive: Path) -> None:
+    for name in ARCHIVE_NAMES:
+        _remove_path(page_dir / name)
+        source = archive / name
+        if source.is_dir() and not source.is_symlink():
+            shutil.copytree(source, page_dir / name)
+        elif source.is_file() and not source.is_symlink():
+            shutil.copyfile(source, page_dir / name)
+
+
+def _remove_derived_page_outputs(page_dir: Path) -> None:
+    for name in DERIVED_NAMES:
+        _remove_path(page_dir / name)
 
 
 def _reset_jobs(run_dir: Path, applied_pages: set[str]) -> None:
@@ -73,19 +101,45 @@ def _reset_jobs(run_dir: Path, applied_pages: set[str]) -> None:
     save_jobs(run_dir, jobs)
 
 
-def _archive_final(run_dir: Path, deck: dict, destination: Path) -> None:
+def _snapshot_final(run_dir: Path, deck: dict, destination: Path) -> bool:
     final_dir = run_dir / "final"
     if final_dir.is_dir():
+        destination.mkdir(parents=True, exist_ok=True)
         shutil.copytree(final_dir, destination / "final")
+        return True
+    output = Path(deck.get("output", "final/deck_edited.pptx"))
+    if not output.is_absolute():
+        output = run_dir / output
+    if output.is_file():
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(output, destination / output.name)
+        return True
+    return False
+
+
+def _remove_final(run_dir: Path, deck: dict) -> None:
+    final_dir = run_dir / "final"
+    if final_dir.is_dir():
         shutil.rmtree(final_dir)
-    else:
-        output = Path(deck.get("output", "final/deck_edited.pptx"))
-        if not output.is_absolute():
-            output = run_dir / output
-        if output.is_file():
-            destination.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(output, destination / output.name)
-            output.unlink()
+        return
+    output = Path(deck.get("output", "final/deck_edited.pptx"))
+    if not output.is_absolute():
+        output = run_dir / output
+    output.unlink(missing_ok=True)
+
+
+def _restore_final(run_dir: Path, snapshot: Path) -> None:
+    archived_dir = snapshot / "final"
+    if archived_dir.is_dir():
+        _remove_path(run_dir / "final")
+        shutil.copytree(archived_dir, run_dir / "final")
+        return
+    files = [path for path in snapshot.iterdir() if path.is_file()] if snapshot.is_dir() else []
+    if files:
+        final_dir = run_dir / "final"
+        final_dir.mkdir(parents=True, exist_ok=True)
+        for path in files:
+            shutil.copyfile(path, final_dir / path.name)
 
 
 def apply_revision(run: str | Path, bundle: str | Path) -> dict:
@@ -107,7 +161,8 @@ def apply_revision(run: str | Path, bundle: str | Path) -> dict:
         round_number = envelope.get("round")
         if not isinstance(round_number, int) or round_number < 1:
             raise BundleValidationError("revision-result bundle requires integer round >= 1")
-        history_target = run_dir / "revisions" / f"round-{round_number:02d}" / "before"
+        history_dir = run_dir / "revisions" / f"round-{round_number:02d}"
+        history_target = history_dir / "before"
         if history_target.exists():
             raise BundleValidationError(f"revision round history already exists: {history_target}")
 
@@ -143,29 +198,41 @@ def apply_revision(run: str | Path, bundle: str | Path) -> dict:
 
         if not staged_pages:
             raise BundleValidationError("revision-result bundle contains no pages")
-        _archive_final(run_dir, deck, archive_root / "deck")
 
-        applied: list[tuple[Path, Path]] = []
+        final_snapshot = archive_root / "deck"
+        had_final = _snapshot_final(run_dir, deck, final_snapshot)
         deck_backup = (run_dir / "deck_manifest.json").read_bytes()
         jobs_backup = (run_dir / "page_jobs.json").read_bytes()
         state_path = run_dir / "run_state.json"
         state_backup = state_path.read_bytes() if state_path.is_file() else None
+        request_backups: dict[Path, bytes] = {}
+        for page in deck.get("pages", []):
+            request_path = resolve_inside(
+                run_dir, page.get("page_request", f"{page['page_dir']}/page_request.json")
+            )
+            if request_path.is_file():
+                request_backups[request_path] = request_path.read_bytes()
+
+        applied_page_dirs: list[tuple[Path, Path]] = []
         try:
             for page_id, stage in staged_pages.items():
                 page_dir = resolve_inside(run_dir, pages_by_id[page_id]["page_dir"])
                 backup = archive_root / page_id
                 _replace_targets(page_dir, stage)
-                applied.append((page_dir, backup))
+                _remove_derived_page_outputs(page_dir)
+                applied_page_dirs.append((page_dir, backup))
+
             _apply_backend(run_dir, deck)
             deck.pop("completed_at", None)
             save_deck(run_dir, deck)
             _reset_jobs(run_dir, set(staged_pages))
             set_run_status(run_dir, "revision_applied", f"applied web revision round {round_number}")
+            _remove_final(run_dir, deck)
 
-            history_target.parent.mkdir(parents=True, exist_ok=True)
+            history_dir.mkdir(parents=True, exist_ok=True)
             shutil.copytree(archive_root, history_target)
-            shutil.copyfile(bundle, history_target.parent / "revision-result.zip")
-            (history_target.parent / "result.json").write_text(
+            shutil.copyfile(bundle, history_dir / "revision-result.zip")
+            (history_dir / "result.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -181,14 +248,20 @@ def apply_revision(run: str | Path, bundle: str | Path) -> dict:
                 encoding="utf-8",
             )
         except Exception:
-            for page_dir, backup in reversed(applied):
-                _restore_targets(page_dir, backup)
+            for page_dir, backup in reversed(applied_page_dirs):
+                _restore_page_snapshot(page_dir, backup)
             (run_dir / "deck_manifest.json").write_bytes(deck_backup)
             (run_dir / "page_jobs.json").write_bytes(jobs_backup)
+            for path, payload in request_backups.items():
+                path.write_bytes(payload)
             if state_backup is None:
                 state_path.unlink(missing_ok=True)
             else:
                 state_path.write_bytes(state_backup)
+            if had_final:
+                _restore_final(run_dir, final_snapshot)
+            if history_dir.exists():
+                shutil.rmtree(history_dir)
             raise
 
     return {
