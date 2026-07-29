@@ -110,13 +110,12 @@ def _portable_page_request(request: dict, page_id: str) -> dict:
 
 def _default_instruction_paths() -> dict[str, Path]:
     skill_root = Path(__file__).resolve().parents[3]
-    candidates = {
+    return {
         "web-batch-worker.md": skill_root / "prompts/web-batch-worker.md",
         "page-decision-tree.md": skill_root / "references/page-decision-tree.md",
         "manifest-schema.md": skill_root / "references/manifest-schema.md",
         "web-bundle-protocol.md": skill_root / "references/web-bundle-protocol.md",
     }
-    return candidates
 
 
 def _instruction_paths(instructions_root: str | Path | None) -> dict[str, Path]:
@@ -136,10 +135,10 @@ def export_handoff(
     notes_path = run_dir / deck.get("notes_manifest", "notes_manifest.json")
     notes = read_json(notes_path, default={"source": None, "notes": []})
 
-    members: dict[str, bytes | Path] = {}
-    portable_deck = _portable_deck(deck)
-    members["deck_manifest.json"] = json_bytes(portable_deck)
-    members["notes_manifest.json"] = json_bytes(_portable_notes(notes))
+    members: dict[str, bytes] = {
+        "deck_manifest.json": json_bytes(_portable_deck(deck)),
+        "notes_manifest.json": json_bytes(_portable_notes(notes)),
+    }
 
     envelope_pages = []
     for page in sorted(deck.get("pages", []), key=lambda item: int(item.get("page_index", 0))):
@@ -154,27 +153,29 @@ def export_handoff(
         request = read_json(request_path)
 
         bundle_page_dir = f"pages/{page_id}"
-        members[f"{bundle_page_dir}/source.png"] = source
+        source_member = f"{bundle_page_dir}/source.png"
+        source_bytes = source.read_bytes()
+        members[source_member] = source_bytes
         members[f"{bundle_page_dir}/page_request.json"] = json_bytes(
             _portable_page_request(request, page_id)
         )
         for optional in ("text_hints.json", "text_hints.png"):
             path = page_dir / optional
             if path.is_file():
-                members[f"{bundle_page_dir}/{optional}"] = path
+                members[f"{bundle_page_dir}/{optional}"] = path.read_bytes()
 
         envelope_pages.append(
             {
                 "page_id": page_id,
                 "page_index": page.get("page_index"),
-                "source_path": f"{bundle_page_dir}/source.png",
-                "source_sha256": sha256_file(source),
+                "source_path": source_member,
+                "source_sha256": sha256_bytes(source_bytes),
                 "page_request": f"{bundle_page_dir}/page_request.json",
                 "text_hints": f"{bundle_page_dir}/text_hints.json"
-                if (page_dir / "text_hints.json").is_file()
+                if f"{bundle_page_dir}/text_hints.json" in members
                 else None,
                 "text_hints_overlay": f"{bundle_page_dir}/text_hints.png"
-                if (page_dir / "text_hints.png").is_file()
+                if f"{bundle_page_dir}/text_hints.png" in members
                 else None,
             }
         )
@@ -183,13 +184,9 @@ def export_handoff(
     for name, path in instructions.items():
         if not path.is_file():
             raise FileNotFoundError(path)
-        members[f"instructions/{name}"] = path
+        members[f"instructions/{name}"] = path.read_bytes()
 
-    member_hashes = {}
-    for name, source in members.items():
-        payload = source.read_bytes() if isinstance(source, Path) else bytes(source)
-        member_hashes[name] = sha256_bytes(payload)
-
+    member_hashes = {name: sha256_bytes(payload) for name, payload in members.items()}
     envelope = {
         "protocol": "editppt-web-bundle",
         "version": 1,
