@@ -32,5 +32,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e skills/image-to-editable-ppt/cli
+      - name: Verify installed command surface
+        run: |
+          editppt --help
+          editppt web --help
+          editppt web export --help
+          editppt web inspect --help
+          editppt web import --help
+          editppt web build --help
+          editppt revision --help
+          editppt revision export --help
+          editppt revision apply --help
       - name: Run tests
         run: python -m unittest discover -s tests -v
