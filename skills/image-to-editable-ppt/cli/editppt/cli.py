@@ -11,7 +11,10 @@ def main() -> None:
     if command_name in {"cli.py", "__main__.py"}:
         command_name = "editppt"
     runtime_dir = Path(__file__).resolve().parent / "runtime"
-    script = runtime_dir / "main.py"
+    if len(sys.argv) > 1 and sys.argv[1] in {"web", "revision"}:
+        script = runtime_dir / "web_cli.py"
+    else:
+        script = runtime_dir / "main.py"
     if not script.exists():
         raise RuntimeError(f"runtime entrypoint not found: {script}")
 
