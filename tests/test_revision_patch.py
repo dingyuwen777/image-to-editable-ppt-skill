@@ -18,16 +18,21 @@ class RevisionApplyTest(unittest.TestCase):
         run = root / "job-001"
         page = run / "pages/page_001"
         (page / "assets").mkdir(parents=True)
+        (run / "final").mkdir(parents=True)
         (page / "source.png").write_bytes(b"source")
         (page / "manifest.json").write_text(json.dumps({"version": "old", "images": []}), encoding="utf-8")
         (page / "imagegen-jobs.json").write_text(json.dumps({"jobs": []}), encoding="utf-8")
         (page / "validation.json").write_text(json.dumps({"passed": False}), encoding="utf-8")
         (page / "preview.png").write_bytes(b"old-preview")
+        (page / "page.pptx").write_bytes(b"old-page-pptx")
+        (page / "page_result.json").write_text(json.dumps({"status": "failed"}), encoding="utf-8")
         (page / "assets/old.png").write_bytes(b"old")
         (page / "page_request.json").write_text(json.dumps({"page_id": "page_001"}), encoding="utf-8")
+        (run / "final/deck_edited.pptx").write_bytes(b"old-final")
         deck = {
             "run_id": "job-001",
             "page_count": 1,
+            "output": "final/deck_edited.pptx",
             "pages": [
                 {
                     "page_id": "page_001",
@@ -127,18 +132,28 @@ class RevisionApplyTest(unittest.TestCase):
 
             result = apply_revision(run, bundle)
 
+            page = run / "pages/page_001"
             self.assertEqual(["page_001"], result["applied_pages"])
-            manifest = json.loads((run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads((page / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual("new", manifest["version"])
-            self.assertTrue((run / "pages/page_001/assets/new.png").is_file())
+            self.assertTrue((page / "assets/new.png").is_file())
+            self.assertFalse((page / "assets/old.png").exists())
+            for stale in ("page.pptx", "preview.png", "validation.json", "page_result.json"):
+                self.assertFalse((page / stale).exists(), stale)
+            self.assertFalse((run / "final/deck_edited.pptx").exists())
             jobs = json.loads((run / "page_jobs.json").read_text(encoding="utf-8"))
             self.assertEqual("pending", jobs["pages"][0]["status"])
             self.assertIsNone(jobs["pages"][0]["dispatch"])
-            history = run / "revisions/round-01/before/page_001/manifest.json"
-            self.assertTrue(history.is_file())
-            self.assertEqual("old", json.loads(history.read_text(encoding="utf-8"))["version"])
+            history = run / "revisions/round-01/before/page_001"
+            self.assertTrue((history / "manifest.json").is_file())
+            self.assertEqual("old", json.loads((history / "manifest.json").read_text(encoding="utf-8"))["version"])
+            self.assertEqual(b"old-preview", (history / "preview.png").read_bytes())
+            self.assertEqual(
+                b"old-final",
+                (run / "revisions/round-01/before/deck/final/deck_edited.pptx").read_bytes(),
+            )
 
-    def test_hash_mismatch_does_not_modify_manifest(self):
+    def test_hash_mismatch_does_not_modify_manifest_or_final(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = self.make_run(root)
@@ -149,6 +164,7 @@ class RevisionApplyTest(unittest.TestCase):
 
             manifest = json.loads((run / "pages/page_001/manifest.json").read_text(encoding="utf-8"))
             self.assertEqual("old", manifest["version"])
+            self.assertEqual(b"old-final", (run / "final/deck_edited.pptx").read_bytes())
 
 
 if __name__ == "__main__":
