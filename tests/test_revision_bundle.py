@@ -106,6 +106,27 @@ class RevisionBundleTest(unittest.TestCase):
             )
             self.assertEqual(0.25, correction["visual_metrics"]["mean_absolute_error"])
             self.assertEqual(0.4, correction["visual_metrics"]["changed_pixel_ratio"])
+            request = json.loads((run / "revisions/round-01/request.json").read_text(encoding="utf-8"))
+            self.assertEqual("job-001", request["job_id"])
+            self.assertEqual(["page_001"], request["pages"])
+
+    def test_explicit_existing_round_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self.make_run(root)
+            first = root / "revision-first.zip"
+            second = root / "revision-second.zip"
+            export_revision(run, first, round_number=1)
+            request_path = run / "revisions/round-01/request.json"
+            original_request = request_path.read_bytes()
+            original_bundle = (run / "revisions/round-01/revision-request.zip").read_bytes()
+
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                export_revision(run, second, round_number=1)
+
+            self.assertFalse(second.exists())
+            self.assertEqual(original_request, request_path.read_bytes())
+            self.assertEqual(original_bundle, (run / "revisions/round-01/revision-request.zip").read_bytes())
 
     def test_raises_when_no_pages_need_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
