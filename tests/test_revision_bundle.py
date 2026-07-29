@@ -34,6 +34,17 @@ class RevisionBundleTest(unittest.TestCase):
             )
             (page_dir / "preview.png").write_bytes(b"preview")
             (page_dir / "split_assets_contact.png").write_bytes(b"contact")
+            (page_dir / "visual_diff.png").write_bytes(b"diff")
+            (page_dir / "visual_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mean_absolute_error": 0.25 if status != "accepted" else 0.0,
+                        "changed_pixel_ratio": 0.4 if status != "accepted" else 0.0,
+                        "interpretation": "Diagnostic only.",
+                    }
+                ),
+                encoding="utf-8",
+            )
             (page_dir / "text_hints.json").write_text(json.dumps({"lines": []}), encoding="utf-8")
             (page_dir / "imagegen-jobs.json").write_text(json.dumps({"jobs": []}), encoding="utf-8")
             pages.append(
@@ -81,6 +92,8 @@ class RevisionBundleTest(unittest.TestCase):
                 self.assertIn("pages/page_001/source.png", names)
                 self.assertIn("pages/page_001/current-manifest.json", names)
                 self.assertIn("pages/page_001/preview.png", names)
+                self.assertIn("pages/page_001/visual_diff.png", names)
+                self.assertIn("pages/page_001/visual_metrics.json", names)
                 self.assertIn("pages/page_001/validation.json", names)
                 self.assertIn("pages/page_001/correction-request.json", names)
                 self.assertFalse(any(name.startswith("pages/page_002/") for name in names))
@@ -88,6 +101,11 @@ class RevisionBundleTest(unittest.TestCase):
             safe_extract(out, extract)
             envelope = load_bundle_envelope(extract, expected_type="revision-request")
             self.assertEqual(1, envelope["round"])
+            correction = json.loads(
+                (extract / "pages/page_001/correction-request.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(0.25, correction["visual_metrics"]["mean_absolute_error"])
+            self.assertEqual(0.4, correction["visual_metrics"]["changed_pixel_ratio"])
 
     def test_raises_when_no_pages_need_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
