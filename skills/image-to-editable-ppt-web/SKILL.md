@@ -12,7 +12,7 @@ This Skill is the ChatGPT Web half of the low-API workflow:
 ```text
 local prepare/export
 → ChatGPT Web semantic reconstruction and image editing
-→ local import/build/render/validate/finalize
+→ local import/build/render/compare/validate/finalize
 ```
 
 It accepts only protocol bundles created by the modified local `editppt` Runtime:
@@ -43,6 +43,7 @@ It does not replace local deterministic construction. Never claim that a final P
 - Reconstruct readable text and simple geometry in `manifest.json`, not in a rendered screenshot.
 - Preserve the source SHA-256 values exactly in the output envelope.
 - For long decks, process pages in bounded batches while continuously saving page results. Do not rely on remembering earlier pages; rely on the bundle files and written manifests.
+- For revision requests, inspect source, preview, contact sheet, visual diff, visual metrics, validation, correction request, and current manifest before changing the page.
 
 ## Quality requirements
 
@@ -54,7 +55,8 @@ The bundled references are authoritative. In particular:
 - foreground visuals cannot use direct crops, emoji, approximate native shapes, or silent fallback;
 - image assets require provenance;
 - a full-slide source image plus hidden/editable text is forbidden;
-- all required quality checks must be explicitly true only after they were performed.
+- all required quality checks must be explicitly true only after they were performed;
+- visual metrics are diagnostic only and cannot waive semantic, editability, provenance, text, or structural failures.
 
 ## Output packaging
 
