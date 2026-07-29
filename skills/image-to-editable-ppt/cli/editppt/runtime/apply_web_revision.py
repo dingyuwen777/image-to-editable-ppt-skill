@@ -42,6 +42,8 @@ ARCHIVE_NAMES = (
     "page.pptx",
     "preview.png",
     "split_assets_contact.png",
+    "visual_diff.png",
+    "visual_metrics.json",
     "validation.json",
     "page_result.json",
     "assets",
@@ -50,6 +52,8 @@ DERIVED_NAMES = (
     "page.pptx",
     "preview.png",
     "split_assets_contact.png",
+    "visual_diff.png",
+    "visual_metrics.json",
     "validation.json",
     "page_result.json",
 )
@@ -218,9 +222,9 @@ def apply_revision(run: str | Path, bundle: str | Path) -> dict:
             for page_id, stage in staged_pages.items():
                 page_dir = resolve_inside(run_dir, pages_by_id[page_id]["page_dir"])
                 backup = archive_root / page_id
+                applied_page_dirs.append((page_dir, backup))
                 _replace_targets(page_dir, stage)
                 _remove_derived_page_outputs(page_dir)
-                applied_page_dirs.append((page_dir, backup))
 
             _apply_backend(run_dir, deck)
             deck.pop("completed_at", None)
