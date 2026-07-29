@@ -10,7 +10,15 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 from configure_image_backend import web_artifact_contract
-from deck_run_state import load_deck, read_json, resolve_inside, run_dir_from_target, save_deck, write_json
+from deck_run_state import (
+    load_deck,
+    load_jobs,
+    read_json,
+    resolve_inside,
+    run_dir_from_target,
+    save_deck,
+    write_json,
+)
 from validate_pptx import normalize_for_validation, page_contract_violations, quality_contract_violations
 from web_bundle import (
     BundleValidationError,
@@ -23,10 +31,38 @@ from web_bundle import (
 
 
 IMPORT_FILE_NAMES = ("manifest.json", "imagegen-jobs.json", "web_result.json")
+DERIVED_FILE_NAMES = (
+    "page.pptx",
+    "preview.png",
+    "split_assets_contact.png",
+    "visual_diff.png",
+    "visual_metrics.json",
+    "validation.json",
+    "page_result.json",
+)
+TARGET_NAMES = (*IMPORT_FILE_NAMES, "web_import.json", "assets", *DERIVED_FILE_NAMES)
 
 
 def _page_map(deck: dict) -> dict[str, dict]:
-    return {page["page_id"]: page for page in deck.get("pages", [])}
+    result: dict[str, dict] = {}
+    for page in deck.get("pages", []):
+        page_id = page.get("page_id")
+        if not isinstance(page_id, str) or not page_id:
+            raise BundleValidationError("deck contains a page without page_id")
+        if page_id in result:
+            raise BundleValidationError(f"deck contains duplicate page id: {page_id}")
+        result[page_id] = page
+    return result
+
+
+def _job_map(run_dir: Path) -> dict[str, dict]:
+    jobs = load_jobs(run_dir)
+    result: dict[str, dict] = {}
+    for page in jobs.get("pages", []):
+        page_id = page.get("page_id")
+        if isinstance(page_id, str):
+            result[page_id] = page
+    return result
 
 
 def _asset_paths(manifest: dict) -> set[str]:
@@ -123,9 +159,16 @@ def _copy_page_to_stage(incoming: Path, stage: Path, metadata: dict) -> None:
     write_json(stage / "web_import.json", metadata)
 
 
+def _remove_target(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
 def _backup_targets(page_dir: Path, backup: Path) -> None:
     backup.mkdir(parents=True, exist_ok=True)
-    for name in (*IMPORT_FILE_NAMES, "web_import.json", "assets"):
+    for name in TARGET_NAMES:
         source = page_dir / name
         if source.is_dir() and not source.is_symlink():
             shutil.copytree(source, backup / name)
@@ -134,30 +177,24 @@ def _backup_targets(page_dir: Path, backup: Path) -> None:
 
 
 def _replace_targets(page_dir: Path, stage: Path) -> None:
-    for name in (*IMPORT_FILE_NAMES, "web_import.json", "assets"):
+    for name in TARGET_NAMES:
         target = page_dir / name
         source = stage / name
-        if target.is_dir() and not target.is_symlink():
-            shutil.rmtree(target)
-        elif target.exists() or target.is_symlink():
-            target.unlink()
-        if source.is_dir():
+        _remove_target(target)
+        if source.is_dir() and not source.is_symlink():
             shutil.copytree(source, target)
-        elif source.is_file():
+        elif source.is_file() and not source.is_symlink():
             shutil.copyfile(source, target)
 
 
 def _restore_targets(page_dir: Path, backup: Path) -> None:
-    for name in (*IMPORT_FILE_NAMES, "web_import.json", "assets"):
+    for name in TARGET_NAMES:
         target = page_dir / name
-        if target.is_dir() and not target.is_symlink():
-            shutil.rmtree(target)
-        elif target.exists() or target.is_symlink():
-            target.unlink()
+        _remove_target(target)
         source = backup / name
-        if source.is_dir():
+        if source.is_dir() and not source.is_symlink():
             shutil.copytree(source, target)
-        elif source.is_file():
+        elif source.is_file() and not source.is_symlink():
             shutil.copyfile(source, target)
 
 
@@ -178,6 +215,7 @@ def import_reconstruction(run: str | Path, bundle: str | Path) -> dict:
     bundle = Path(bundle).expanduser().resolve()
     deck = load_deck(run_dir)
     pages_by_id = _page_map(deck)
+    jobs_by_id = _job_map(run_dir)
     bundle_sha = sha256_file(bundle)
 
     with tempfile.TemporaryDirectory(prefix=".web-import-", dir=run_dir) as temporary_name:
@@ -195,6 +233,14 @@ def import_reconstruction(run: str | Path, bundle: str | Path) -> dict:
             page_id = entry["page_id"]
             if page_id not in pages_by_id:
                 raise BundleValidationError(f"bundle page is not part of this run: {page_id}")
+            job = jobs_by_id.get(page_id)
+            if job is None:
+                raise BundleValidationError(f"page job is missing for reconstruction import: {page_id}")
+            if job.get("status") != "pending":
+                raise BundleValidationError(
+                    f"initial reconstruction import requires pending page {page_id}; "
+                    f"current status is {job.get('status')!r}. Use `editppt revision export/apply` after page processing starts."
+                )
             page = pages_by_id[page_id]
             source = resolve_inside(run_dir, page["source_image"])
             actual_hash = sha256_file(source)
@@ -228,8 +274,8 @@ def import_reconstruction(run: str | Path, bundle: str | Path) -> dict:
                 page_dir = resolve_inside(run_dir, pages_by_id[page_id]["page_dir"])
                 backup = temporary / "backup" / page_id
                 _backup_targets(page_dir, backup)
-                _replace_targets(page_dir, stage)
                 applied.append((page_dir, backup))
+                _replace_targets(page_dir, stage)
             for page in deck.get("pages", []):
                 request_path = resolve_inside(
                     run_dir, page.get("page_request", f"{page['page_dir']}/page_request.json")
